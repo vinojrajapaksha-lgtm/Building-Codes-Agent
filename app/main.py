@@ -1,12 +1,14 @@
-from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from app.llm import generate_answer
 from app.pdf_utils import extract_pdf_text
 from app.storage import init_db, list_documents, search_documents, store_document
 
-app = FastAPI(title="Research PDF Agent", version="0.1.0")
+app = FastAPI(title="Research PDF Agent", version="0.2.0")
+templates = Jinja2Templates(directory="app/templates")
 
 
 class ChatRequest(BaseModel):
@@ -17,6 +19,11 @@ class ChatRequest(BaseModel):
 @app.on_event("startup")
 def startup() -> None:
     init_db()
+
+
+@app.get("/", response_class=HTMLResponse)
+def index(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse("index.html", {"request": request})
 
 
 @app.post("/documents/upload")
