@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Research PDF Agent</title>
+    <style>
+      body {
+        font-family: "Inter", system-ui, -apple-system, sans-serif;
+        margin: 0;
+        background: #f6f7fb;
+        color: #1f2937;
+      }
+      header {
+        padding: 24px 32px;
+        background: #0f172a;
+        color: white;
+      }
+      main {
+        max-width: 960px;
+        margin: 32px auto;
+        padding: 0 24px 48px;
+      }
+      section {
+        background: white;
+        padding: 24px;
+        border-radius: 16px;
+        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.1);
+        margin-bottom: 24px;
+      }
+      h2 {
+        margin-top: 0;
+      }
+      button {
+        background: #2563eb;
+        border: none;
+        color: white;
+        padding: 10px 18px;
+        border-radius: 8px;
+        cursor: pointer;
+        font-weight: 600;
+      }
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 24px;
+      }
+      input, textarea {
+        width: 100%;
+        padding: 12px;
+        border-radius: 8px;
+        border: 1px solid #e2e8f0;
+        font-size: 14px;
+      }
+      textarea {
+        min-height: 120px;
+      }
+      .status {
+        margin-top: 12px;
+        font-size: 14px;
+        color: #475569;
+      }
+      .results {
+        margin-top: 16px;
+      }
+      .chip {
+        display: inline-block;
+        margin-right: 8px;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: #e2e8f0;
+        font-size: 12px;
+      }
+      pre {
+        white-space: pre-wrap;
+        background: #0f172a;
+        color: #e2e8f0;
+        padding: 16px;
+        border-radius: 12px;
+        margin: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Research PDF Agent</h1>
+      <p>Upload unlimited PDFs (bounded by disk) and ask research questions over your library.</p>
+    </header>
+    <main>
+      <section>
+        <h2>Upload PDFs</h2>
+        <p>Select one or more PDF files to add to your research library.</p>
+        <input type="file" id="pdf-files" multiple accept="application/pdf" />
+        <div class="status" id="upload-status"></div>
+        <button id="upload-button">Upload PDFs</button>
+      </section>
+
+      <section>
+        <h2>Ask a question</h2>
+        <div class="row">
+          <div>
+            <label for="question">Question</label>
+            <textarea id="question" placeholder="What are the key findings on ...?"></textarea>
+          </div>
+          <div>
+            <label for="top-k">Top results</label>
+            <input id="top-k" type="number" min="1" max="10" value="5" />
+            <button id="ask-button" style="margin-top: 16px">Ask</button>
+            <div class="status" id="ask-status"></div>
+          </div>
+        </div>
+        <div class="results" id="answer"></div>
+      </section>
+
+      <section>
+        <h2>Stored PDFs</h2>
+        <button id="refresh-button">Refresh list</button>
+        <div class="results" id="documents"></div>
+      </section>
+    </main>
+
+    <script>
+      const uploadButton = document.getElementById("upload-button");
+      const uploadStatus = document.getElementById("upload-status");
+      const askButton = document.getElementById("ask-button");
+      const askStatus = document.getElementById("ask-status");
+      const answerEl = document.getElementById("answer");
+      const documentsEl = document.getElementById("documents");
+
+      async function refreshDocuments() {
+        documentsEl.textContent = "Loading...";
+        const response = await fetch("/documents");
+        const data = await response.json();
+        if (!data.documents?.length) {
+          documentsEl.textContent = "No PDFs uploaded yet.";
+          return;
+        }
+        documentsEl.innerHTML = data.documents
+          .map(
+            (doc) => `
+              <div class="chip">#${doc.id} ${doc.filename} (${doc.page_count} pages)</div>
+            `
+          )
+          .join("");
+      }
+
+      uploadButton.addEventListener("click", async () => {
+        const files = document.getElementById("pdf-files").files;
+        if (!files.length) {
+          uploadStatus.textContent = "Please choose at least one PDF.";
+          return;
+        }
+        uploadButton.disabled = true;
+        uploadStatus.textContent = "Uploading...";
+        const formData = new FormData();
+        [...files].forEach((file) => formData.append("files", file));
+        try {
+          const response = await fetch("/documents/upload", {
+            method: "POST",
+            body: formData,
+          });
+          const data = await response.json();
+          uploadStatus.textContent = `Uploaded ${data.stored.length} PDFs.`;
+          await refreshDocuments();
+        } catch (error) {
+          uploadStatus.textContent = "Upload failed. Check the server logs.";
+        } finally {
+          uploadButton.disabled = false;
+        }
+      });
+
+      askButton.addEventListener("click", async () => {
+        const question = document.getElementById("question").value.trim();
+        if (!question) {
+          askStatus.textContent = "Enter a question first.";
+          return;
+        }
+        askButton.disabled = true;
+        askStatus.textContent = "Thinking...";
+        try {
+          const response = await fetch("/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              question,
+              top_k: Number(document.getElementById("top-k").value || 5),
+            }),
+          });
+          const data = await response.json();
+          answerEl.innerHTML = `
+            <h3>Answer</h3>
+            <pre>${data.answer}</pre>
+            <h3>Matches</h3>
+            ${data.matches
+              .map((match) => `<div class="chip">#${match[0]} ${match[1]}</div>`)
+              .join("")}
+          `;
+          askStatus.textContent = "";
+        } catch (error) {
+          askStatus.textContent = "Request failed. Check the server logs.";
+        } finally {
+          askButton.disabled = false;
+        }
+      });
+
+      document.getElementById("refresh-button").addEventListener("click", refreshDocuments);
+      refreshDocuments();
+    </script>
+  </body>
+</html>
